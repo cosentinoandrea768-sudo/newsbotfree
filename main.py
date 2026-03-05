@@ -12,7 +12,7 @@ from html import unescape
 # ENV VARS
 # ==============================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-CHAT_ID = os.getenv("CHAT_ID")
+CHAT_ID = int(os.getenv("CHAT_ID"))
 PORT = int(os.getenv("PORT", 10000))
 
 if not BOT_TOKEN or not CHAT_ID:
@@ -33,9 +33,9 @@ def home():
 # FILE PERSISTENZA
 # ==============================
 STORAGE_FILE = "sent_news.json"
-MAX_SENT_NEWS = 200   # 🔥 limite massimo ID salvati
-INIT_FEED_LIMIT = 5   # 🔥 articoli letti per feed all'avvio
-FETCH_LIMIT = 5       # 🔥 articoli letti per feed ogni ciclo
+MAX_SENT_NEWS = 200
+INIT_FEED_LIMIT = 5
+FETCH_LIMIT = 5
 
 def load_sent_news():
     if os.path.exists(STORAGE_FILE):
@@ -80,7 +80,6 @@ def fetch_new_news():
     for feed_url in RSS_FEEDS:
         feed = feedparser.parse(feed_url)
 
-        # 🔥 Limitiamo articoli per feed
         for entry in feed.entries[:FETCH_LIMIT]:
 
             news_id = getattr(entry, "id", entry.link)
@@ -123,20 +122,24 @@ async def send_news():
         return
 
     for item in news_items:
+
         message = (
             f"📰 BitPath News\n"
-            f"{item['title']}\n"
-            f"{item['summary']}\n"
+            f"{item['title']}\n\n"
+            f"{item['summary']}\n\n"
             f"🕒 {item['published']}\n"
             f"🔗 {item['link']}"
         )
 
         try:
-            await bot.send_message(chat_id=CHAT_ID, text=message)
+            await bot.send_message(
+                chat_id=CHAT_ID,
+                text=message,
+                disable_web_page_preview=True
+            )
 
             sent_news.add(item["id"])
 
-            # 🔥 Manteniamo sent_news piccolo
             if len(sent_news) > MAX_SENT_NEWS:
                 sent_news = set(list(sent_news)[-100:])
 
@@ -147,7 +150,6 @@ async def send_news():
         except Exception as e:
             print("[TELEGRAM ERROR]", e)
 
-    # 🔥 Forza pulizia memoria (importante su Render free)
     gc.collect()
 
 # ==============================
@@ -156,45 +158,54 @@ async def send_news():
 async def scheduler():
     global sent_news
 
-    await bot.send_message(
-        chat_id=CHAT_ID,
-        text="🚀 Bot Economy News LIVE avviato"
-    )
+    print("🚀 Scheduler avviato")
 
-    # 🔹 Carica storico
+    try:
+        await bot.send_message(
+            chat_id=CHAT_ID,
+            text="🚀 Bot Economy News LIVE avviato"
+        )
+    except Exception as e:
+        print("[TELEGRAM ERROR START]", e)
+
     sent_news.update(load_sent_news())
     print(f"[DEBUG] Caricati {len(sent_news)} ID dal file")
 
-    # 🔹 Registra feed correnti senza invio (limitato)
     for feed_url in RSS_FEEDS:
         feed = feedparser.parse(feed_url)
+
         for entry in feed.entries[:INIT_FEED_LIMIT]:
             news_id = getattr(entry, "id", entry.link)
             sent_news.add(news_id)
 
-    # 🔥 Limite massimo storico
     if len(sent_news) > MAX_SENT_NEWS:
         sent_news = set(list(sent_news)[-100:])
 
     save_sent_news(sent_news)
-    print("[DEBUG] Storico iniziale registrato (limitato)")
+
+    print("[DEBUG] Storico iniziale registrato")
 
     while True:
+
         try:
             await send_news()
         except Exception as e:
             print("[LOOP ERROR]", e)
 
-        await asyncio.sleep(300)  # 5 minuti
+        await asyncio.sleep(300)
 
 # ==============================
 # MAIN
 # ==============================
 if __name__ == "__main__":
+
     from threading import Thread
 
-    def run_flask():
-        app.run(host="0.0.0.0", port=PORT)
+    def start_scheduler():
+        asyncio.run(scheduler())
 
-    Thread(target=run_flask).start()
-    asyncio.run(scheduler())
+    # scheduler in background
+    Thread(target=start_scheduler).start()
+
+    # flask nel thread principale
+    app.run(host="0.0.0.0", port=PORT)
